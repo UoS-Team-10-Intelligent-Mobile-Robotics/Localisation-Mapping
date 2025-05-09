@@ -38,7 +38,16 @@ from model_feeg6043 import (
     graphslam_frontend,
     graphslam_backend,
 )
-from math_feeg6043 import Vector, Matrix, l2m, Inverse, HomogeneousTransformation
+from math_feeg6043 import (
+    Vector,
+    Matrix,
+    t2v,
+    v2t,
+    l2m,
+    Inverse,
+    HomogeneousTransformation,
+    polar2cartesian,
+)
 
 import warnings
 
@@ -94,6 +103,7 @@ class LaptopPilot:
             0.375,
         ]  # create a list of waypoints
         self.relative_path = False  # False if you want it to be absolute
+        self.finished_track = False
 
         # model pose
         self.est_pose_northings_m = 0
@@ -131,9 +141,13 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(60),
+            scan_fov=np.deg2rad(90),
             n_beams=30,
         )
+        t_bl = Vector(2)
+        t_bl[0] = lidar_xb
+        t_bl[1] = lidar_yb
+        self.H_bl = HomogeneousTransformation(t_bl, 0)
 
         # trajectory planning parameters
         self.velocity = 0.1  # m/s
@@ -199,6 +213,7 @@ class LaptopPilot:
 
         self.graph = graphslam_frontend()
         self.graph.anchor(self.sigma_anchor)
+        self.landmark_id = 0
 
         ###############################################################
 
@@ -642,6 +657,11 @@ class LaptopPilot:
             self.est_pose_eastings_m = p_robot[1, 0]
             self.est_pose_yaw_rad = p_robot[2, 0]
 
+            H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
+            p_robot_ = copy.copy(p_robot)
+            sigma_ = copy.copy(self.sigma_anchor)
+            self.graph.motion(p_robot_, sigma_, dp, final=False)
+
             observation, _ = lidar_scan(
                 p_robot, self.lidar_data, self.lidar, self.sigma_observe
             )
@@ -658,9 +678,82 @@ class LaptopPilot:
                     )
                 ]
                 if new_observation.label == "corner":
+                    threshold = 0.001  # can reduce to make less conservative
+                    z_lm = Vector(2)
+                    z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
+                    t_lm = polar2cartesian(z_lm[0], z_lm[1])
+                    self.graph.observation(
+                        t2v(H_eb.H @ self.H_bl.H @ v2t(t_lm)),
+                        self.sigma_xy,
+                        self.landmark_id,
+                        t_lm,
+                    )
                     print(
                         f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
                     )
+
+            if self.path.wp_id == len(self.path.Tp_arc) - 1:
+                self.graph.construct_graph()
+                self.finished_track = True
+
+                initial_residual = 100  # just needs to be a big number to avoid triggering convergence if the first iteration has large residuals
+
+                residual_threshold = 1e-12  # if result changes by <1
+                delta_threshold = 1 / 10  # if result changes by <1
+                lim_iterations = 20
+
+                n_iterations = 0
+                delta_residual = initial_residual
+                residual = initial_residual
+
+                iteration_continue = True
+                residual_continue = True
+                converge_continue = True
+
+                # if any of the conditions become false, then while loop will exit
+                cpu_start_solver = datetime.now()
+                print("********* Starting solver ***************")
+                graph_opt = graphslam_backend(self.graph)
+
+                while iteration_continue and residual_continue and converge_continue:
+                    graph_opt.solve()
+
+                    prev_residual = residual
+                    residual = graph_opt.residual
+
+                    delta_residual = abs((prev_residual - residual) / prev_residual)
+                    n_iterations += 1
+
+                    print("**************  Residual = ", residual, " ***************")
+                    residual_continue = residual > residual_threshold
+                    print("Residual above threshold?", residual_continue)
+
+                    print(
+                        "************** Iteration = ", n_iterations, " ***************"
+                    )
+                    iteration_continue = n_iterations <= lim_iterations
+                    print("Iterations below limit?", iteration_continue)
+
+                    print(
+                        "********* Delta Residual = ",
+                        delta_residual,
+                        " ***************",
+                    )
+                    converge_continue = delta_residual > delta_threshold
+                    print("Residual still changing?", converge_continue)
+
+                    # reconstruct the graph with these nodes
+                    graph_opt = graphslam_frontend(graph_opt)  # Task
+                    graph_opt.construct_graph()  # Task
+                    graph_opt = graphslam_backend(graph_opt)  # Task
+
+                cpu_end_solver = datetime.now()
+                delta = cpu_end_solver - cpu_start_solver
+                print(
+                    "********* Final solution took:",
+                    (delta.total_seconds()),
+                    "s ***************",
+                )
 
             msg = self.pose_parse(
                 [
@@ -746,6 +839,8 @@ class LaptopPilot:
 
             # actuator commands
             q = self.ddrive.inv_kinematics(u)
+            if self.finished_track == True:
+                q = Vector(2)
 
             wheel_speed_msg = Vector3Stamped()
             wheel_speed_msg.vector.x = q[0, 0]  # Right wheel speed
