@@ -6,6 +6,7 @@ Licensed under the BSD 3-Clause License.
 See LICENSE.md file in the project root for full license information.
 """
 
+import traceback
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
@@ -103,7 +104,6 @@ class LaptopPilot:
             0.375,
         ]  # create a list of waypoints
         self.relative_path = False  # False if you want it to be absolute
-        self.finished_track = False
 
         # model pose
         self.est_pose_northings_m = 0
@@ -156,8 +156,8 @@ class LaptopPilot:
         self.acceptance_radius = 0.1  # m
 
         # control gains
-        self.tau_s = 0.1  # s to remove along track error
-        self.L = 0.075  # m distance to remove normal and angular error
+        self.tau_s = 0.25  # s to remove along track error
+        self.L = 0.5  # m distance to remove normal and angular error
         self.v_max = 0.2  # fastest the robot can go
         self.w_max = np.deg2rad(30)  # fastest the robot can turn
 
@@ -178,12 +178,10 @@ class LaptopPilot:
         self.sigma_motion[0, 1] = (
             np.deg2rad(0.1) ** 2
         )  # impact of w angular velocity on x
-
         self.sigma_motion[1, 0] = 0.1**2  # impact of v linear velocity on y
         self.sigma_motion[1, 1] = (
             np.deg2rad(0.1) ** 2
         )  # impact of w angular velocity on y
-
         self.sigma_motion[2, 0] = 0.1**2  # impact of v linear velocity on gamma
         self.sigma_motion[2, 1] = (
             np.deg2rad(0.1) ** 2
@@ -192,11 +190,11 @@ class LaptopPilot:
         # observation model linear noise with range
         self.sigma_observe = Matrix(2, 2)
         self.sigma_observe[0, 0] = 0.1**2  # 10% of range
-        self.sigma_observe[0, 1] = 0
-        self.sigma_observe[1, 0] = np.deg2rad(0.1) ** 2  # 0.1 degree per metre range
-        self.sigma_observe[1, 1] = 0
+        self.sigma_observe[0, 1] = np.deg2rad(0.1) ** 2  # 0.1 degree per metre range
+        self.sigma_observe[1, 0] = 0.1**2
+        self.sigma_observe[1, 1] = np.deg2rad(0.1) ** 2  # 0.1 degree per metre range
 
-        # anchor constraint, matrix must be invertable
+        # anchor constraint, matrix must be invertible
         self.sigma_anchor = Matrix(3, 3)
         self.sigma_anchor[0, 0] = 0.1
         self.sigma_anchor[0, 1] = 0.01
@@ -412,18 +410,18 @@ class LaptopPilot:
         p = Vector(3)
         z_lm = Vector(2)
 
-        for dist in np.arange(0.1, 0.5, 0.2):
-            for i in range(40):
+        for dist in np.arange(0.1, 0.5, 0.1):
+            for i in range(100):
                 # determine basic pose for each corner
-                if i <= 10:  # southwest corner
+                if i <= 25:  # southwest corner
                     p[0] = 0.0 + dist
                     p[1] = 0.0 + dist
                     p[2] = np.deg2rad(225)
-                elif i <= 20:  # northwest corner
+                elif i <= 50:  # northwest corner
                     p[0] = 2.0 - dist
                     p[1] = 0.0 + dist
                     p[2] = np.deg2rad(315)
-                elif i <= 30:  # northeast corner
+                elif i <= 75:  # northeast corner
                     p[0] = 2.0 - dist
                     p[1] = 2.0 - dist
                     p[2] = np.deg2rad(45)
@@ -460,17 +458,17 @@ class LaptopPilot:
                         corner_training.append(new_observation)
 
         # decide some random position and angular offsets to make sure the training data is varied
-        for i in range(40):
+        for i in range(100):
             # determine basic pose for each wall
-            if i <= 10:  # west wall
+            if i <= 25:  # west wall
                 p[0] = 0.8
                 p[1] = 0.4
                 p[2] = np.deg2rad(0)
-            elif i <= 20:  # north wall
+            elif i <= 50:  # north wall
                 p[0] = 1.6
                 p[1] = 0.8
                 p[2] = np.deg2rad(90)
-            elif i <= 30:  # east
+            elif i <= 75:  # east
                 p[0] = 1.2
                 p[1] = 1.6
                 p[2] = np.deg2rad(180)
@@ -518,6 +516,7 @@ class LaptopPilot:
             print("KeyboardInterrupt received, stopping…")
         except Exception as e:
             print("Exception: ", e)
+            traceback.print_exc()
         finally:
             self.lidar_sub.stop()
             self.groundtruth_sub.stop()
@@ -553,6 +552,15 @@ class LaptopPilot:
                 self.est_pose_northings_m = self.measured_pose_northings_m
                 self.est_pose_eastings_m = self.measured_pose_eastings_m
                 self.est_pose_yaw_rad = self.measured_pose_yaw_rad
+                # print(
+                #     "Initial pose set to: Northings = ",
+                #     self.est_pose_northings_m,
+                #     "m, Eastings =",
+                #     self.est_pose_eastings_m,
+                #     "m, Yaw =",
+                #     np.rad2deg(self.est_pose_yaw_rad),
+                #     "degrees",
+                # )
 
                 # get current time and determine timestep
                 self.t_prev = datetime.utcnow().timestamp()  # initialise the time
@@ -562,6 +570,7 @@ class LaptopPilot:
                 # path and tragectory are initialised
                 self.initialise_pose = False
                 self.generate_trajectory()
+                self.sigma_xy = self.sigma_anchor
 
                 # train Gaussian Process Classifier
                 m_x = []
@@ -610,6 +619,7 @@ class LaptopPilot:
                 self.gpc_corner = GaussianProcessClassifier(
                     kernel=kernel, random_state=0
                 ).fit(X_train, y_train)
+                print("Training complete")
                 # print(gpc_corner.score(X_train, y_train))
                 # print(gpc_corner.classes_)
 
@@ -649,17 +659,103 @@ class LaptopPilot:
             p_gt[1, 0] = self.measured_pose_eastings_m
             p_gt[2, 0] = self.measured_pose_yaw_rad
 
-            p_robot, self.sigma_xy, dp, p_gt = rigid_body_kinematics(p_robot, u, dt)
-            # print("Estimated northings: ", p_robot[0,0], "m; Estimated eastings: ", p_robot[1, 0], "m; Estimated yaw:", p_robot[2,0], "rad;")
+            msg = self.pose_parse(
+                [
+                    datetime.utcnow().timestamp(),
+                    self.est_pose_northings_m,
+                    self.est_pose_eastings_m,
+                    0,
+                    0,
+                    0,
+                    self.est_pose_yaw_rad,
+                ]
+            )
+            self.datalog.log(msg, topic_name="/est_pose")
 
-            # update for show_laptop.py
-            self.est_pose_northings_m = p_robot[0, 0]
-            self.est_pose_eastings_m = p_robot[1, 0]
-            self.est_pose_yaw_rad = p_robot[2, 0]
+            ################################################################################
+            #  TODO: Implement your controller here
+
+            ##################### Trajectory sample ##########################
+
+            # feedforward control: check wp progress and sample reference trajectory
+            self.path.wp_progress(
+                self.t, p_robot, self.acceptance_radius
+            )  # fill turning radius
+            p_ref, u_ref = self.path.p_u_sample(
+                self.t
+            )  # sample the path at the current elapsetime (i.e. seconds from start of motion modelling)
+            # print("Reference northings: ", p_ref[0, 0], "m; Reference eastings: ", p_ref[1, 0], "m; Reference yaw:", p_ref[2, 0], "rad;")
+            # print("Reference velocity: ", u_ref[0], "m/s; Reference angular rate: ", u_ref[1], "rad/s;")
+
+            # sanity check: if controller is perfect, this is what the robot would be doing
+            # self.est_pose_northings_m = p_ref[0, 0]
+            # self.est_pose_eastings_m = p_ref[1, 0]
+            # self.est_pose_yaw_rad = p_ref[2, 0]
+
+            # feedback control: get pose change to desired trajectory from body
+            dp = (
+                p_ref - p_robot
+            )  # compute difference between reference and estimated pose in the e-frame
+            dp[2] = (dp[2] + np.pi) % (
+                2 * np.pi
+            ) - np.pi  # handle angle wrapping for yaw
 
             H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
+            ds = Inverse(H_eb.H_R) @ dp
+            # print(
+            #     "Northings diff: ",
+            #     dp[0, 0],
+            #     "m; Eastings diff: ",
+            #     dp[1, 0],
+            #     "m; Yaw diff:",
+            #     dp[2, 0],
+            #     "rad;",
+            # )
+            # compute control gains for the initial condition (where the robot is stationary)
+            if self.initialise_control == True:
+                self.k_n = 2 * u_ref[0] / (self.L**2)
+                self.k_g = u_ref[0] / self.L
+                self.initialise_control = (
+                    False  # maths changes a bit after the first iteration
+                )
+
+            # update the controls
+            du = feedback_control(ds, self.k_s, self.k_n, self.k_g)
+
+            # total control
+            u = (
+                u_ref + du
+            )  # combine the feedforward and feedback control twist components
+
+            # ensure within performance limitation
+            if u[0] > self.v_max:
+                u[0] = self.v_max
+            if u[0] < -self.v_max:
+                u[0] = -self.v_max
+            if u[1] > self.w_max:
+                u[1] = self.w_max
+            if u[1] < -self.w_max:
+                u[1] = -self.w_max
+
+            # update control gains for the next timestep using current velocity, which is stored in u
+            self.k_n = 2 * u[0] / (self.L**2)
+            self.k_g = u[0] / self.L
+            # print("Ks: ", self.k_s, "; Kn: ", self.k_n, "; Kg: ", self.k_g)
+
+            # apply the motion model and deal with angle wrapping
+            # p_robot, _, _, _ = rigid_body_kinematics(p_robot, u, dt)
+            p_robot, self.sigma_xy, dp, p_gt = rigid_body_kinematics(
+                p_robot,
+                u,
+                dt,
+                p_gt,
+                sigma_motion=self.sigma_motion,
+                sigma_xy=self.sigma_xy,
+            )
+            p_robot[2] = p_robot[2] % (2 * np.pi)
+
             p_robot_ = copy.copy(p_robot)
-            sigma_ = copy.copy(self.sigma_anchor)
+            sigma_ = copy.copy(self.sigma_xy)
             self.graph.motion(p_robot_, sigma_, dp, final=False)
 
             observation, _ = lidar_scan(
@@ -680,6 +776,7 @@ class LaptopPilot:
                 if new_observation.label == "corner":
                     threshold = 0.001  # can reduce to make less conservative
                     z_lm = Vector(2)
+                    H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
                     z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
                     t_lm = polar2cartesian(z_lm[0], z_lm[1])
                     self.graph.observation(
@@ -693,8 +790,21 @@ class LaptopPilot:
                     )
 
             if self.path.wp_id == len(self.path.Tp_arc) - 1:
+                wheel_speed_msg = Vector3Stamped()
+                wheel_speed_msg.vector.x = 0  # Right wheel speed
+                wheel_speed_msg.vector.y = 0  # Left wheel speed
+
+                self.cmd_wheelrate_right = wheel_speed_msg.vector.x
+                self.cmd_wheelrate_left = wheel_speed_msg.vector.y
+
+                self.wheel_speed_pub.publish(wheel_speed_msg)
+                self.datalog.log(wheel_speed_msg, topic_name="/wheel_speeds_cmd")
+
+                self.graph.motion(p_robot, self.sigma_anchor, Vector(3), final=True)
+
                 self.graph.construct_graph()
-                self.finished_track = True
+                # np.savetxt("infovec.txt", self.graph.b, delimiter=",")
+                # np.savetxt("infomac.txt", self.graph.H, delimiter=",")
 
                 initial_residual = 100  # just needs to be a big number to avoid triggering convergence if the first iteration has large residuals
 
@@ -755,92 +865,13 @@ class LaptopPilot:
                     "s ***************",
                 )
 
-            msg = self.pose_parse(
-                [
-                    datetime.utcnow().timestamp(),
-                    self.est_pose_northings_m,
-                    self.est_pose_eastings_m,
-                    0,
-                    0,
-                    0,
-                    self.est_pose_yaw_rad,
-                ]
-            )
-            self.datalog.log(msg, topic_name="/est_pose")
-
-            ################################################################################
-            #  TODO: Implement your controller here
-
-            ##################### Trajectory sample ##########################
-
-            # feedforward control: check wp progress and sample reference trajectory
-            self.path.wp_progress(
-                self.t, p_robot, self.acceptance_radius
-            )  # fill turning radius
-            p_ref, u_ref = self.path.p_u_sample(
-                self.t
-            )  # sample the path at the current elapsetime (i.e. seconds from start of motion modelling)
-            # print("Reference northings: ", p_ref[0, 0], "m; Reference eastings: ", p_ref[1, 0], "m; Reference yaw:", p_ref[2, 0], "rad;")
-            # print("Reference velocity: ", u_ref[0], "m/s; Reference angular rate: ", u_ref[1], "rad/s;")
-
-            self.est_pose_northings_m = p_ref[0, 0]
-            self.est_pose_eastings_m = p_ref[1, 0]
-            self.est_pose_yaw_rad = p_ref[2, 0]
-
-            # feedback control: get pose change to desired trajectory from body
-            dp = (
-                p_ref - p_robot
-            )  # compute difference between reference and estimated pose in the e-frame
-            dp[2] = (dp[2] + np.pi) % (
-                2 * np.pi
-            ) - np.pi  # handle angle wrapping for yaw
-
-            H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
-            ds = Inverse(H_eb.H_R) @ dp
-            # print(
-            #     "Northings diff: ",
-            #     dp[0, 0],
-            #     "m; Eastings diff: ",
-            #     dp[1, 0],
-            #     "m; Yaw diff:",
-            #     dp[2, 0],
-            #     "rad;",
-            # )
-            # compute control gains for the initial condition (where the robot is stationary)
-            if self.initialise_control == True:
-                self.k_n = 2 * u_ref[0] / (self.L**2)
-                self.k_g = u_ref[0] / self.L
-                self.initialise_control = (
-                    False  # maths changes a bit after the first iteration
-                )
-
-            # update the controls
-            du = feedback_control(ds, self.k_s, self.k_n, self.k_g)
-
-            # total control
-            u = (
-                u_ref + du
-            )  # combine the feedforward and feedback control twist components
-
-            # ensure within performance limitation
-            if u[0] > self.v_max:
-                u[0] = self.v_max
-            if u[0] < -self.v_max:
-                u[0] = -self.v_max
-            if u[1] > self.w_max:
-                u[1] = self.w_max
-            if u[1] < -self.w_max:
-                u[1] = -self.w_max
-
-            # update control gains for the next timestep using current velocity, which is stored in u
-            self.k_n = 2 * u[0] / (self.L**2)
-            self.k_g = u[0] / self.L
-            # print("Ks: ", self.k_s, "; Kn: ", self.k_n, "; Kg: ", self.k_g)
+            # update for show_laptop.py
+            self.est_pose_northings_m = p_robot[0, 0]
+            self.est_pose_eastings_m = p_robot[1, 0]
+            self.est_pose_yaw_rad = p_robot[2, 0]
 
             # actuator commands
             q = self.ddrive.inv_kinematics(u)
-            if self.finished_track == True:
-                q = Vector(2)
 
             wheel_speed_msg = Vector3Stamped()
             wheel_speed_msg.vector.x = q[0, 0]  # Right wheel speed

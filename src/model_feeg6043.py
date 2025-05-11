@@ -93,6 +93,7 @@ def rigid_body_kinematics(
         H_eb_gt = HomogeneousTransformation()
 
     u_hat = Vector(2)  # create vector to add noise to
+    tol = 1e-3
 
     # Only add noise if there is control and noise
     if np.all(sigma_motion == 0.0) == False and np.all(u == 0.0) == False:
@@ -110,15 +111,26 @@ def rigid_body_kinematics(
         # calculate the noise component
         J = Matrix(3, 3)
 
-        dx_dx = 1
-        dx_dy = 0
-        dx_dg = (u[0] / u[1]) * (-np.cos(g_eb) + np.cos(g_eb + u[1] * dt))
-        dy_dx = 0
-        dy_dy = 1
-        dy_dg = (u[0] / u[1]) * (-np.sin(g_eb) + np.sin(g_eb + u[1] * dt))
-        dg_dx = 0
-        dg_dy = 0
-        dg_dg = 1
+        if abs(u[1]) > tol:
+            dx_dx = 1
+            dx_dy = 0
+            dx_dg = (u[0] / u[1]) * (-np.cos(g_eb) + np.cos(g_eb + u[1] * dt))
+            dy_dx = 0
+            dy_dy = 1
+            dy_dg = (u[0] / u[1]) * (-np.sin(g_eb) + np.sin(g_eb + u[1] * dt))
+            dg_dx = 0
+            dg_dy = 0
+            dg_dg = 1
+        else:
+            dx_dx = 1
+            dx_dy = 0
+            dx_dg = u[0] * dt * (-np.sin(g_eb))
+            dy_dx = 0
+            dy_dy = 1
+            dy_dg = u[0] * dt * (np.cos(g_eb))
+            dg_dx = 0
+            dg_dy = 0
+            dg_dg = 1
 
         J[0, 0] = dx_dx
         J[0, 1] = dx_dy
@@ -136,7 +148,6 @@ def rigid_body_kinematics(
         u_hat = u
         gamma_noise = 0
 
-    tol = 1e-3
     if abs(u_hat[0]) < tol and abs(u_hat[1]) < tol:
         # handles the stationary case where
         H_bb_ = HomogeneousTransformation(Vector(2), 0)
@@ -150,7 +161,7 @@ def rigid_body_kinematics(
             # implement a simpler vesion of the model that doesn't need to compute twist
             # H_eb_ = H_eb@H_bb'
 
-            v = u[0]  # surge rate
+            v = u_hat[0]  # surge rate
 
             # compute motion in the body frame due to the pure linear velocity
             t_bb_ = Vector(2)  # [2x1] matrix of 0
@@ -181,8 +192,8 @@ def rigid_body_kinematics(
         else:
             # implements the model derived for twist
 
-            v = u[0]  # surge rate
-            w = u[1]  # yaw rate
+            v = u_hat[0]  # surge rate
+            w = u_hat[1]  # yaw rate
 
             # calculate centre of rotation from the initial body position
             t_bc = Vector(2)  # [2x1] matrix of 0
@@ -1944,7 +1955,7 @@ class graphslam_frontend:
                     print("A_ij", A_ij)
                     print("self.bij", self.bij)
 
-                sigma_ij = self.pose_covariance[j] - self.pose_covariance[i]  # -
+                sigma_ij = self.pose_covariance[j] - self.pose_covariance[i]
 
                 # populate information vector and matrix
                 self.b[3 * i : 3 * i + 3] += (e_ij.T @ Inverse(sigma_ij) @ A_ij).T
@@ -2051,8 +2062,8 @@ class graphslam_frontend:
             dR_i_dg_i = Matrix(2, 2)
             dR_i_dg_i[0, 0] = -np.sin(X_i.gamma)
             dR_i_dg_i[1, 1] = -np.sin(X_i.gamma)
-            dR_i_dg_i[0, 1] = -np.cos(X_i.gamma)
-            dR_i_dg_i[1, 0] = np.cos(X_i.gamma)
+            dR_i_dg_i[0, 1] = np.cos(X_i.gamma)
+            dR_i_dg_i[1, 0] = -np.cos(X_i.gamma)
 
             A_ij = Matrix(3, 3)
             A_ij[0:2, 0:2] = -Z_ij.R.T @ X_i.R.T
@@ -2092,8 +2103,8 @@ class graphslam_frontend:
             dR_i_d_g_i = Matrix(2, 2)
             dR_i_d_g_i[0, 0] = -np.sin(X_i.gamma)
             dR_i_d_g_i[1, 1] = -np.sin(X_i.gamma)
-            dR_i_d_g_i[0, 1] = -np.cos(X_i.gamma)
-            dR_i_d_g_i[1, 0] = np.cos(X_i.gamma)
+            dR_i_d_g_i[0, 1] = np.cos(X_i.gamma)
+            dR_i_d_g_i[1, 0] = -np.cos(X_i.gamma)
 
             A_il = Matrix(2, 3)
             A_il[0:2, 0:2] = -X_i.R.T
