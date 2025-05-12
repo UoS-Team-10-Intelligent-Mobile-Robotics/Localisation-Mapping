@@ -212,6 +212,7 @@ class LaptopPilot:
         self.graph = graphslam_frontend()
         self.graph.anchor(self.sigma_anchor)
         self.landmark_id = 0
+        self.pose_id = 0
 
         ###############################################################
 
@@ -653,12 +654,6 @@ class LaptopPilot:
             p_robot[1, 0] = self.est_pose_eastings_m
             p_robot[2, 0] = self.est_pose_yaw_rad
 
-            # take ground truth pose
-            p_gt = Vector(3)
-            p_gt[0, 0] = self.measured_pose_northings_m
-            p_gt[1, 0] = self.measured_pose_eastings_m
-            p_gt[2, 0] = self.measured_pose_yaw_rad
-
             msg = self.pose_parse(
                 [
                     datetime.utcnow().timestamp(),
@@ -744,50 +739,60 @@ class LaptopPilot:
 
             # apply the motion model and deal with angle wrapping
             # p_robot, _, _, _ = rigid_body_kinematics(p_robot, u, dt)
-            p_robot, self.sigma_xy, dp, p_gt = rigid_body_kinematics(
+            p_robot, self.sigma_xy, dp, _ = rigid_body_kinematics(
                 p_robot,
                 u,
                 dt,
-                p_gt,
                 sigma_motion=self.sigma_motion,
                 sigma_xy=self.sigma_xy,
             )
             p_robot[2] = p_robot[2] % (2 * np.pi)
 
-            p_robot_ = copy.copy(p_robot)
-            sigma_ = copy.copy(self.sigma_xy)
-            self.graph.motion(p_robot_, sigma_, dp, final=False)
+            if self.pose_id % 5 == 0:
+                p_robot_ = copy.copy(p_robot)
+                sigma_ = copy.copy(self.sigma_xy)
+                self.graph.motion(p_robot_, sigma_, dp, final=False)
+            self.pose_id += 1
 
-            # observation, _ = lidar_scan(
-            #     p_robot, self.lidar_data, self.lidar, self.sigma_observe
-            # )
-            # if (
-            #     observation is not None
-            #     or not np.isnan(observation.data_filled[:, 0]).any()
-            # ):
-            #     new_observation = self.GPC_input_output(observation, None)
-            #     new_observation.label = self.gpc_corner.classes_[
-            #         np.argmax(
-            #             self.gpc_corner.predict_proba(
-            #                 [new_observation.data_filled[:, 0]]
-            #             )
-            #         )
-            #     ]
-            #     if new_observation.label == "corner":
-            #         threshold = 0.001  # can reduce to make less conservative
-            #         z_lm = Vector(2)
-            #         H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
-            #         z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
-            #         t_lm = polar2cartesian(z_lm[0], z_lm[1])
-            #         self.graph.observation(
-            #             t2v(H_eb.H @ self.H_bl.H @ v2t(t_lm)),
-            #             self.sigma_xy,
-            #             self.landmark_id,
-            #             t_lm,
-            #         )
-            #         print(
-            #             f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
-            #         )
+            observation, _ = lidar_scan(
+                p_robot, self.lidar_data, self.lidar, self.sigma_observe
+            )
+            if (
+                observation is not None
+                or not np.isnan(observation.data_filled[:, 0]).any()
+            ):
+                new_observation = self.GPC_input_output(observation, None)
+                new_observation.label = self.gpc_corner.classes_[
+                    np.argmax(
+                        self.gpc_corner.predict_proba(
+                            [new_observation.data_filled[:, 0]]
+                        )
+                    )
+                ]
+                if new_observation.label == "corner":
+                    threshold = 0.001  # can reduce to make less conservative
+                    z_lm = Vector(2)
+                    H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
+                    z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
+                    t_lm = polar2cartesian(z_lm[0], z_lm[1])
+                    t_em = H_eb.H @ self.H_bl.H @ v2t(t_lm)
+                    self.graph.observation(
+                        t2v(t_em),
+                        self.sigma_xy,
+                        self.landmark_id,
+                        t_lm,
+                    )
+                    if t_em[0] <= 1.0 and t_em[1] <= 1.0:
+                        self.landmark_id = 0
+                    if t_em[0] > 1.0 and t_em[1] <= 1.0:
+                        self.landmark_id = 1
+                    if t_em[0] > 1.0 and t_em[1] > 1.0:
+                        self.landmark_id = 2
+                    if t_em[0] <= 1.0 and t_em[1] > 1.0:
+                        self.landmark_id = 3
+                    print(
+                        f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
+                    )
 
             if self.path.wp_id == len(self.path.Tp_arc) - 1:
                 wheel_speed_msg = Vector3Stamped()

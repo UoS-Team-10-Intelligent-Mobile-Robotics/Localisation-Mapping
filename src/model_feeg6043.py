@@ -93,7 +93,7 @@ def rigid_body_kinematics(
         H_eb_gt = HomogeneousTransformation()
 
     u_hat = Vector(2)  # create vector to add noise to
-    tol = 1e-3
+    tol = 1e-3  # increase tolerance as needed
 
     # Only add noise if there is control and noise
     if np.all(sigma_motion == 0.0) == False and np.all(u == 0.0) == False:
@@ -2913,8 +2913,9 @@ class ParticlePathSLAM:
             sum += p.weight
         num_p = len(self.particles)
         if sum < 1e-10:
-            self.weights = [1.0 / num_p] * num_p
-        self.weights /= sum
+            self.weights = [1.0 / num_p]
+        else:
+            self.weights /= sum
 
     def importance_sampling(self):
         """Perform importance sampling."""
