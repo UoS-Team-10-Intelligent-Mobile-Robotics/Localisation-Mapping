@@ -141,7 +141,7 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(90),
+            scan_fov=np.deg2rad(60),
             n_beams=30,
         )
         t_bl = Vector(2)
@@ -549,29 +549,6 @@ class LaptopPilot:
 
             ###### wait for the first sensor info to initialize the pose ######
             if self.initialise_pose == True:
-                self.est_pose_northings_m = self.measured_pose_northings_m
-                self.est_pose_eastings_m = self.measured_pose_eastings_m
-                self.est_pose_yaw_rad = self.measured_pose_yaw_rad
-                # print(
-                #     "Initial pose set to: Northings = ",
-                #     self.est_pose_northings_m,
-                #     "m, Eastings =",
-                #     self.est_pose_eastings_m,
-                #     "m, Yaw =",
-                #     np.rad2deg(self.est_pose_yaw_rad),
-                #     "degrees",
-                # )
-
-                # get current time and determine timestep
-                self.t_prev = datetime.utcnow().timestamp()  # initialise the time
-                self.t = 0  # elapsed time
-                time.sleep(0.1)  # wait for approx a timestep before proceeding
-
-                # path and tragectory are initialised
-                self.initialise_pose = False
-                self.generate_trajectory()
-                self.sigma_xy = self.sigma_anchor
-
                 # train Gaussian Process Classifier
                 m_x = []
                 m_y = []
@@ -622,6 +599,29 @@ class LaptopPilot:
                 print("Training complete")
                 # print(gpc_corner.score(X_train, y_train))
                 # print(gpc_corner.classes_)
+
+                self.est_pose_northings_m = self.measured_pose_northings_m
+                self.est_pose_eastings_m = self.measured_pose_eastings_m
+                self.est_pose_yaw_rad = self.measured_pose_yaw_rad
+                # print(
+                #     "Initial pose set to: Northings = ",
+                #     self.est_pose_northings_m,
+                #     "m, Eastings =",
+                #     self.est_pose_eastings_m,
+                #     "m, Yaw =",
+                #     np.rad2deg(self.est_pose_yaw_rad),
+                #     "degrees",
+                # )
+
+                # get current time and determine timestep
+                self.t_prev = datetime.utcnow().timestamp()  # initialise the time
+                self.t = 0  # elapsed time
+                time.sleep(0.1)  # wait for approx a timestep before proceeding
+
+                # path and tragectory are initialised
+                self.initialise_pose = False
+                self.generate_trajectory()
+                self.sigma_xy = self.sigma_anchor
 
         # > Think < #
         ################################################################################
@@ -758,36 +758,36 @@ class LaptopPilot:
             sigma_ = copy.copy(self.sigma_xy)
             self.graph.motion(p_robot_, sigma_, dp, final=False)
 
-            observation, _ = lidar_scan(
-                p_robot, self.lidar_data, self.lidar, self.sigma_observe
-            )
-            if (
-                observation is not None
-                or not np.isnan(observation.data_filled[:, 0]).any()
-            ):
-                new_observation = self.GPC_input_output(observation, None)
-                new_observation.label = self.gpc_corner.classes_[
-                    np.argmax(
-                        self.gpc_corner.predict_proba(
-                            [new_observation.data_filled[:, 0]]
-                        )
-                    )
-                ]
-                if new_observation.label == "corner":
-                    threshold = 0.001  # can reduce to make less conservative
-                    z_lm = Vector(2)
-                    H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
-                    z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
-                    t_lm = polar2cartesian(z_lm[0], z_lm[1])
-                    self.graph.observation(
-                        t2v(H_eb.H @ self.H_bl.H @ v2t(t_lm)),
-                        self.sigma_xy,
-                        self.landmark_id,
-                        t_lm,
-                    )
-                    print(
-                        f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
-                    )
+            # observation, _ = lidar_scan(
+            #     p_robot, self.lidar_data, self.lidar, self.sigma_observe
+            # )
+            # if (
+            #     observation is not None
+            #     or not np.isnan(observation.data_filled[:, 0]).any()
+            # ):
+            #     new_observation = self.GPC_input_output(observation, None)
+            #     new_observation.label = self.gpc_corner.classes_[
+            #         np.argmax(
+            #             self.gpc_corner.predict_proba(
+            #                 [new_observation.data_filled[:, 0]]
+            #             )
+            #         )
+            #     ]
+            #     if new_observation.label == "corner":
+            #         threshold = 0.001  # can reduce to make less conservative
+            #         z_lm = Vector(2)
+            #         H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
+            #         z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
+            #         t_lm = polar2cartesian(z_lm[0], z_lm[1])
+            #         self.graph.observation(
+            #             t2v(H_eb.H @ self.H_bl.H @ v2t(t_lm)),
+            #             self.sigma_xy,
+            #             self.landmark_id,
+            #             t_lm,
+            #         )
+            #         print(
+            #             f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
+            #         )
 
             if self.path.wp_id == len(self.path.Tp_arc) - 1:
                 wheel_speed_msg = Vector3Stamped()
@@ -803,8 +803,8 @@ class LaptopPilot:
                 self.graph.motion(p_robot, self.sigma_anchor, Vector(3), final=True)
 
                 self.graph.construct_graph()
-                # np.savetxt("infovec.txt", self.graph.b, delimiter=",")
-                # np.savetxt("infomac.txt", self.graph.H, delimiter=",")
+                np.savetxt("infovec.txt", self.graph.b, delimiter=",")
+                np.savetxt("infomac.txt", self.graph.H, delimiter=",")
 
                 initial_residual = 100  # just needs to be a big number to avoid triggering convergence if the first iteration has large residuals
 

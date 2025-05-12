@@ -148,7 +148,7 @@ def rigid_body_kinematics(
         u_hat = u
         gamma_noise = 0
 
-    if abs(u_hat[0]) < tol and abs(u_hat[1]) < tol:
+    if abs(u[0]) < tol and abs(u[1]) < tol:
         # handles the stationary case where
         H_bb_ = HomogeneousTransformation(Vector(2), 0)
         H_eb_ = H_eb
@@ -157,11 +157,11 @@ def rigid_body_kinematics(
             H_eb_gt = H_ebgt
 
     else:
-        if abs(u_hat[1]) < tol:
+        if abs(u[1]) < tol:
             # implement a simpler vesion of the model that doesn't need to compute twist
             # H_eb_ = H_eb@H_bb'
 
-            v = u_hat[0]  # surge rate
+            v = u[0]  # surge rate
 
             # compute motion in the body frame due to the pure linear velocity
             t_bb_ = Vector(2)  # [2x1] matrix of 0
@@ -192,8 +192,8 @@ def rigid_body_kinematics(
         else:
             # implements the model derived for twist
 
-            v = u_hat[0]  # surge rate
-            w = u_hat[1]  # yaw rate
+            v = u[0]  # surge rate
+            w = u[1]  # yaw rate
 
             # calculate centre of rotation from the initial body position
             t_bc = Vector(2)  # [2x1] matrix of 0
