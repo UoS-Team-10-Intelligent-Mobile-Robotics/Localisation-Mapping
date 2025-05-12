@@ -2902,8 +2902,9 @@ class ParticlePathSLAM:
             sum += p.weight
         num_p = len(self.particles)
         if sum < 1e-10:
-            self.weights = [1.0 / num_p] * num_p
-        self.weights /= sum
+            self.weights = [1.0 / num_p]
+        else:
+            self.weights /= sum
 
     def importance_sampling(self):
         """Perform importance sampling."""

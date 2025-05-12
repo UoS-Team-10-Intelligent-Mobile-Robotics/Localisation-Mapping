@@ -132,7 +132,7 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(90),
+            scan_fov=np.deg2rad(60),
             n_beams=30,
         )
 
@@ -156,26 +156,6 @@ class LaptopPilot:
 
         #################### Noise Attributes #########################
 
-        # position uncertainty
-        self.sigma_xy = Matrix(3, 3)
-
-        # motion model linear noise due to v and w
-        self.sigma_motion = Matrix(3, 2)
-        self.sigma_motion[0, 0] = 0.1**2  # impact of v linear velocity on x
-        self.sigma_motion[0, 1] = (
-            np.deg2rad(0.1) ** 2
-        )  # impact of w angular velocity on x
-
-        self.sigma_motion[1, 0] = 0.1**2  # impact of v linear velocity on y
-        self.sigma_motion[1, 1] = (
-            np.deg2rad(0.1) ** 2
-        )  # impact of w angular velocity on y
-
-        self.sigma_motion[2, 0] = 0.1**2  # impact of v linear velocity on gamma
-        self.sigma_motion[2, 1] = (
-            np.deg2rad(0.1) ** 2
-        )  # impact of w angular velocity on gamma
-
         # observation model linear noise with range
         self.sigma_observe = Matrix(2, 2)
         self.sigma_observe[0, 0] = 0.01**2  # 10% of range
@@ -185,7 +165,7 @@ class LaptopPilot:
 
         ####################### Particle Path SLAM ####################
         self.environment_map = build_square_environment() + np.ones((800, 2))
-        self.num_particles = 20
+        self.num_particles = 100
         self.initial_position_std = 0.1
         self.auxiliary_noise = [np.deg2rad(1), 0.01, np.deg2rad(0.1)]
 
