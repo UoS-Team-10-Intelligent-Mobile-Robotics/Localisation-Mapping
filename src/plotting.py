@@ -7,7 +7,12 @@ info_mac = np.loadtxt("infomac.txt", delimiter=",")
 print(info_vec)
 print(info_mac)
 
-show_information(info_vec, 918, 3, 1, 2, display_type="intensity")
-show_information(info_mac, 918, 3, 1, 2, display_type="intensity")
-show_information(info_vec, 918, 3, 1, 2, display_type="source")
-show_information(info_mac, 918, 3, 1, 2, display_type="source")
+show_information(info_vec, 185, 3, 4, 2, display_type="intensity")
+show_information(info_mac, 185, 3, 4, 2, display_type="intensity")
+show_information(info_vec, 185, 3, 4, 2, display_type="source")
+show_information(info_mac, 185, 3, 4, 2, display_type="source")
+
+print(np.allclose(info_mac, info_mac.T))
+print(np.linalg.eigvalsh(info_mac) > 0)  # All must be True
+eigvals = np.linalg.eigvalsh(info_mac)
+print(eigvals)

@@ -739,6 +739,9 @@ class LaptopPilot:
 
             # apply the motion model and deal with angle wrapping
             # p_robot, _, _, _ = rigid_body_kinematics(p_robot, u, dt)
+
+            p_robot_ = copy.copy(p_robot)
+            sigma_ = copy.copy(self.sigma_xy)
             p_robot, self.sigma_xy, dp, _ = rigid_body_kinematics(
                 p_robot,
                 u,
@@ -749,13 +752,11 @@ class LaptopPilot:
             p_robot[2] = p_robot[2] % (2 * np.pi)
 
             if self.pose_id % 5 == 0:
-                p_robot_ = copy.copy(p_robot)
-                sigma_ = copy.copy(self.sigma_xy)
                 self.graph.motion(p_robot_, sigma_, dp, final=False)
             self.pose_id += 1
 
             observation, _ = lidar_scan(
-                p_robot, self.lidar_data, self.lidar, self.sigma_observe
+                p_robot_, self.lidar_data, self.lidar, self.sigma_observe
             )
             if (
                 observation is not None
@@ -772,7 +773,7 @@ class LaptopPilot:
                 if new_observation.label == "corner":
                     threshold = 0.001  # can reduce to make less conservative
                     z_lm = Vector(2)
-                    H_eb = HomogeneousTransformation(p_robot[0:2], p_robot[2])
+                    H_eb = HomogeneousTransformation(p_robot_[0:2], p_robot_[2])
                     z_lm[0], z_lm[1], loc = self.find_corner(new_observation, threshold)
                     t_lm = polar2cartesian(z_lm[0], z_lm[1])
                     t_em = H_eb.H @ self.H_bl.H @ v2t(t_lm)
@@ -791,7 +792,7 @@ class LaptopPilot:
                     if t_em[0] <= 1.0 and t_em[1] > 1.0:
                         self.landmark_id = 3
                     print(
-                        f"#######################\n\n CORNER DETECTED at {p_robot}  \n\n#######################"
+                        f"#######################\n\n CORNER DETECTED at {p_robot_}  \n\n#######################"
                     )
 
             if self.path.wp_id == len(self.path.Tp_arc) - 1:
@@ -805,7 +806,7 @@ class LaptopPilot:
                 self.wheel_speed_pub.publish(wheel_speed_msg)
                 self.datalog.log(wheel_speed_msg, topic_name="/wheel_speeds_cmd")
 
-                self.graph.motion(p_robot, self.sigma_anchor, Vector(3), final=True)
+                self.graph.motion(p_robot, self.sigma_xy, Vector(3), final=True)
 
                 self.graph.construct_graph()
                 np.savetxt("infovec.txt", self.graph.b, delimiter=",")
