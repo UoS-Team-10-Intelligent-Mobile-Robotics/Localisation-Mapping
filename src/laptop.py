@@ -132,7 +132,7 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(60),
+            scan_fov=np.deg2rad(90),
             n_beams=30,
         )
 
@@ -165,7 +165,7 @@ class LaptopPilot:
 
         ####################### Particle Path SLAM ####################
         self.environment_map = build_square_environment() + np.ones((800, 2))
-        self.num_particles = 100
+        self.num_particles = 30
         self.initial_position_std = 0.1
         self.auxiliary_noise = [np.deg2rad(1), 0.01, np.deg2rad(0.1)]
 
