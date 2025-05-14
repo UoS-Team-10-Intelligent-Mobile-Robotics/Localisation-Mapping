@@ -133,7 +133,7 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(120),
+            scan_fov=np.deg2rad(90),
             n_beams=30,
         )
 
@@ -146,8 +146,8 @@ class LaptopPilot:
         # control gains
         self.tau_s = 0.1  # s to remove along track error
         self.L = 0.075  # m distance to remove normal and angular error
-        self.v_max = 0.05  # fastest the robot can go
-        self.w_max = np.deg2rad(15)  # fastest the robot can turn
+        self.v_max = 0.025  # fastest the robot can go
+        self.w_max = np.deg2rad(25)  # fastest the robot can turn
 
         self.k_s = 1 / self.tau_s
         self.k_n = 0.1
@@ -166,7 +166,7 @@ class LaptopPilot:
 
         ####################### Particle Path SLAM ####################
         self.environment_map = build_square_environment() + np.ones((800, 2))
-        self.num_particles = 50
+        self.num_particles = 10
         self.initial_position_std = 0.1
         self.auxiliary_noise = [np.deg2rad(1), 0.01, np.deg2rad(0.1)]
 
@@ -534,7 +534,7 @@ class LaptopPilot:
             )
             self.datalog.log(msg, topic_name="/est_pose")
 
-            self.T = np.vstack((self.T, t_now))
+            self.T = np.vstack((self.T, self.t))
             self.P_KDE = np.vstack(
                 (self.P_KDE, [p_robot[0, 0], p_robot[1, 0], p_robot[2, 0]])
             )
@@ -553,7 +553,7 @@ class LaptopPilot:
                 "particle_path_slam.csv",
                 np.hstack((self.T, self.P_KDE, self.P_STD, self.P_GT)),
                 delimiter=",",
-                header="Time, Northings KDE, Eastings KDE, Yaw KDE, Northings STD, Eastings STD, Northings GT, Eastings GT, Yaw GT, Lidar observations",
+                header="Time, Northings KDE, Eastings KDE, Yaw KDE, Northings STD, Eastings STD, Northings GT, Eastings GT, Yaw GT",
             )
 
             # actuator commands
