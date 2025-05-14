@@ -6,6 +6,7 @@ Licensed under the BSD 3-Clause License.
 See LICENSE.md file in the project root for full license information.
 """
 
+import traceback
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel
@@ -132,7 +133,7 @@ class LaptopPilot:
             lidar_xb,
             lidar_yb,
             distance_range=[0.1, 1],
-            scan_fov=np.deg2rad(90),
+            scan_fov=np.deg2rad(120),
             n_beams=30,
         )
 
@@ -165,7 +166,7 @@ class LaptopPilot:
 
         ####################### Particle Path SLAM ####################
         self.environment_map = build_square_environment() + np.ones((800, 2))
-        self.num_particles = 30
+        self.num_particles = 50
         self.initial_position_std = 0.1
         self.auxiliary_noise = [np.deg2rad(1), 0.01, np.deg2rad(0.1)]
 
@@ -175,6 +176,10 @@ class LaptopPilot:
         self.map_std = self.sigma_observe[0, 0] * self.lidar.distance_range[1]
         self.length_scale = 0.2
 
+        self.T = Vector(1)
+        self.P_GT = Matrix(1, 3)  # pose
+        self.P_KDE = Matrix(1, 3)  # pose
+        self.P_STD = Matrix(1, 2)  # std
         ###############################################################
 
         self.datalog = DataLogger(log_dir="logs")
@@ -323,6 +328,7 @@ class LaptopPilot:
             print("KeyboardInterrupt received, stopping…")
         except Exception as e:
             print("Exception: ", e)
+            traceback.print_exc()
         finally:
             self.lidar_sub.stop()
             self.groundtruth_sub.stop()
@@ -380,6 +386,18 @@ class LaptopPilot:
                     self.initial_position_std,
                     self.auxiliary_noise,
                 )
+                self.T[0, 0] = 0
+                kde_pose, kde_std = self.particle_filter.kde_pose()
+                self.P_KDE[0, 0] = kde_pose[0, 0]
+                self.P_KDE[0, 1] = kde_pose[1, 0]
+                self.P_KDE[0, 2] = kde_pose[2, 0]
+
+                self.P_STD[0, 0] = kde_std[0, 0]
+                self.P_STD[0, 1] = kde_std[1, 0]
+
+                self.P_GT[0, 0] = p_init[0, 0]
+                self.P_GT[0, 1] = p_init[1, 0]
+                self.P_GT[0, 2] = p_init[2, 0]
 
         # > Think < #
         ################################################################################
@@ -405,40 +423,11 @@ class LaptopPilot:
             self.t += dt  # add to the elapsed time
             self.t_prev = t_now  # update the previous timestep for the next loop
 
-            # take current particle pose estimates and update by twist
-            self.particle_filter.predict(u, dt)
-            p_robot, p_robot_std = self.particle_filter.kde_pose()
-
-            observations, observations_std = lidar_scan(
-                p_robot, self.environment_map, self.lidar, self.sigma_observe
-            )
-            if observations is not None:
-                self.particle_filter.observation_update(
-                    observations,
-                    observations_std,
-                    self.map_std,
-                    self.length_scale,
-                )
-
-            # print("Estimated northings: ", p_robot[0,0], "m; Estimated eastings: ", p_robot[1, 0], "m; Estimated yaw:", p_robot[2,0], "rad;")
-
-            # update for show_laptop.py
-            self.est_pose_northings_m = p_robot[0, 0]
-            self.est_pose_eastings_m = p_robot[1, 0]
-            self.est_pose_yaw_rad = p_robot[2, 0]
-
-            msg = self.pose_parse(
-                [
-                    datetime.utcnow().timestamp(),
-                    self.est_pose_northings_m,
-                    self.est_pose_eastings_m,
-                    0,
-                    0,
-                    0,
-                    self.est_pose_yaw_rad,
-                ]
-            )
-            self.datalog.log(msg, topic_name="/est_pose")
+            # take current pose estimate and update by twist
+            p_robot = Vector(3)
+            p_robot[0, 0] = self.est_pose_northings_m
+            p_robot[1, 0] = self.est_pose_eastings_m
+            p_robot[2, 0] = self.est_pose_yaw_rad
 
             ################################################################################
             #  TODO: Implement your controller here
@@ -455,9 +444,10 @@ class LaptopPilot:
             # print("Reference northings: ", p_ref[0, 0], "m; Reference eastings: ", p_ref[1, 0], "m; Reference yaw:", p_ref[2, 0], "rad;")
             # print("Reference velocity: ", u_ref[0], "m/s; Reference angular rate: ", u_ref[1], "rad/s;")
 
-            self.est_pose_northings_m = p_ref[0, 0]
-            self.est_pose_eastings_m = p_ref[1, 0]
-            self.est_pose_yaw_rad = p_ref[2, 0]
+            # sanity check: if controller is perfect, this is what the robot would be doing
+            # self.est_pose_northings_m = p_ref[0, 0]
+            # self.est_pose_eastings_m = p_ref[1, 0]
+            # self.est_pose_yaw_rad = p_ref[2, 0]
 
             # feedback control: get pose change to desired trajectory from body
             dp = (
@@ -508,6 +498,63 @@ class LaptopPilot:
             self.k_n = 2 * u[0] / (self.L**2)
             self.k_g = u[0] / self.L
             # print("Ks: ", self.k_s, "; Kn: ", self.k_n, "; Kg: ", self.k_g)
+
+            # take current particle pose estimates and update by twist
+            self.particle_filter.predict(u, dt)
+            p_robot, p_robot_std = self.particle_filter.kde_pose()
+
+            observations, observations_std = lidar_scan(
+                p_robot, self.environment_map, self.lidar, self.sigma_observe
+            )
+            if observations is not None:
+                self.particle_filter.observation_update(
+                    observations,
+                    observations_std,
+                    self.map_std,
+                    self.length_scale,
+                )
+
+            # print("Estimated northings: ", p_robot[0,0], "m; Estimated eastings: ", p_robot[1, 0], "m; Estimated yaw:", p_robot[2,0], "rad;")
+
+            # update for show_laptop.py
+            self.est_pose_northings_m = p_robot[0, 0]
+            self.est_pose_eastings_m = p_robot[1, 0]
+            self.est_pose_yaw_rad = p_robot[2, 0]
+
+            msg = self.pose_parse(
+                [
+                    datetime.utcnow().timestamp(),
+                    self.est_pose_northings_m,
+                    self.est_pose_eastings_m,
+                    0,
+                    0,
+                    0,
+                    self.est_pose_yaw_rad,
+                ]
+            )
+            self.datalog.log(msg, topic_name="/est_pose")
+
+            self.T = np.vstack((self.T, t_now))
+            self.P_KDE = np.vstack(
+                (self.P_KDE, [p_robot[0, 0], p_robot[1, 0], p_robot[2, 0]])
+            )
+            self.P_STD = np.vstack((self.P_STD, [p_robot_std[0, 0], p_robot_std[1, 0]]))
+            self.P_GT = np.vstack(
+                (
+                    self.P_GT,
+                    [
+                        self.measured_pose_northings_m,
+                        self.measured_pose_eastings_m,
+                        self.measured_pose_yaw_rad,
+                    ],
+                )
+            )
+            np.savetxt(
+                "particle_path_slam.csv",
+                np.hstack((self.T, self.P_KDE, self.P_STD, self.P_GT)),
+                delimiter=",",
+                header="Time, Northings KDE, Eastings KDE, Yaw KDE, Northings STD, Eastings STD, Northings GT, Eastings GT, Yaw GT, Lidar observations",
+            )
 
             # actuator commands
             q = self.ddrive.inv_kinematics(u)
